@@ -60,6 +60,28 @@ type PolledMessage struct {
 	CurrentOffset uint64
 	MessageCount  uint32
 	Messages      []IggyMessage
+	release       func()
+}
+
+// SetReleaseFunc attaches a buffer-recycle hook invoked by Release. Used by
+// the TCP transport to plumb a pooled read buffer through; internal API.
+func (m *PolledMessage) SetReleaseFunc(fn func()) {
+	if m == nil {
+		return
+	}
+	m.release = fn
+}
+
+// Release returns the underlying transport buffer to its pool. After calling
+// Release the message Payload and UserHeaders bytes must not be read again —
+// copy out what you need first. Safe on nil and on repeated calls.
+func (m *PolledMessage) Release() {
+	if m == nil || m.release == nil {
+		return
+	}
+	fn := m.release
+	m.release = nil
+	fn()
 }
 
 type SendMessagesRequest struct {

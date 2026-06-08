@@ -73,5 +73,15 @@ func (c *IggyTcpClient) PollMessages(
 		return nil, err
 	}
 
-	return binaryserialization.DeserializeFetchMessagesResponse(buffer, c.MessageCompression)
+	polled, err := binaryserialization.DeserializeFetchMessagesResponse(buffer, c.MessageCompression)
+	if err != nil {
+		releaseResponseBuf(buffer)
+		return nil, err
+	}
+	if polled != nil && len(buffer) > 0 {
+		polled.SetReleaseFunc(func() { releaseResponseBuf(buffer) })
+	} else {
+		releaseResponseBuf(buffer)
+	}
+	return polled, nil
 }
