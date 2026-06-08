@@ -229,6 +229,16 @@ var requestBufPool = sync.Pool{
 	},
 }
 
+// responseBufPool reuses response body buffers; only buffers returned via
+// PolledMessage.Release feed it. New returns a zero-cap sentinel so callers
+// that don't release don't pay an over-allocation cost.
+var responseBufPool = sync.Pool{
+	New: func() any {
+		var b []byte
+		return &b
+	},
+}
+
 func acquireRequestBuf() *[]byte {
 	return requestBufPool.Get().(*[]byte)
 }
@@ -242,6 +252,24 @@ func releaseRequestBuf(bp *[]byte) {
 	requestBufPool.Put(bp)
 }
 
+func acquireResponseBuf(n int) []byte {
+	bp := responseBufPool.Get().(*[]byte)
+	if cap(*bp) < n {
+		responseBufPool.Put(bp)
+		return make([]byte, n)
+	}
+	return (*bp)[:n]
+}
+
+func releaseResponseBuf(b []byte) {
+	const maxPooled = 1 << 20
+	if cap(b) == 0 || cap(b) > maxPooled {
+		return
+	}
+	b = b[:0]
+	responseBufPool.Put(&b)
+}
+
 // appender lets a command encode directly into a pooled buffer.
 type appender interface {
 	MarshalledSize() int
@@ -249,10 +277,11 @@ type appender interface {
 }
 
 func (c *IggyTcpClient) read(expectedSize int) (int, []byte, error) {
-	buffer := make([]byte, expectedSize)
+	buffer := acquireResponseBuf(expectedSize)
 	n, err := c.readInto(buffer)
 	if err != nil {
-		return n, buffer[:n], err
+		releaseResponseBuf(buffer)
+		return n, nil, err
 	}
 	return n, buffer, nil
 }

@@ -18,6 +18,8 @@
 package iggcon
 
 import (
+	"sync/atomic"
+
 	ierror "github.com/apache/iggy/foreign/go/errors"
 )
 
@@ -60,6 +62,29 @@ type PolledMessage struct {
 	CurrentOffset uint64
 	MessageCount  uint32
 	Messages      []IggyMessage
+	release       atomic.Pointer[func()]
+}
+
+// SetReleaseFunc attaches a buffer-recycle hook invoked by Release. Used by
+// the TCP transport to plumb a pooled read buffer through; internal API.
+func (m *PolledMessage) SetReleaseFunc(fn func()) {
+	if m == nil {
+		return
+	}
+	m.release.Store(&fn)
+}
+
+// Release returns the underlying transport buffer to its pool. After calling
+// Release the message Payload and UserHeaders bytes must not be read again —
+// copy out what you need first. Safe on nil and on concurrent or repeated
+// calls — only the first caller invokes the release hook.
+func (m *PolledMessage) Release() {
+	if m == nil {
+		return
+	}
+	if fn := m.release.Swap(nil); fn != nil {
+		(*fn)()
+	}
 }
 
 type SendMessagesRequest struct {
